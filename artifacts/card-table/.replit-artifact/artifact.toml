@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "Card Table"
+description = "An offline mobile card-game collection with Solitaire, Poker, Rummy, Hearts, Spades, and Stealing Bundles. Play against computer opponents or pass-and-play with friends on one phone."
+version = "1.0.0"
+id = "artifacts/card-table"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 25303
+
+[services.development]
+run = "pnpm --filter @workspace/card-table run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/card-table", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/card-table", "run", "serve" ]
+
+[services.env]
+PORT = "25303"
+BASE_PATH = "/"
