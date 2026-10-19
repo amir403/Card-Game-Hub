@@ -1,0 +1,1 @@
+- [Expo web font loading](expo-web-font-loading.md) — avoid loading Inter Google font assets in the card table's web preview; it timed out in FontFaceObserver.
