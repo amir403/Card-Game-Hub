@@ -17,8 +17,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import {
   Card,
+  blackjackHit,
+  blackjackStand,
+  blackjackTotal,
   cardKey,
   catalog,
+  chooseCrazyEightsSuit,
+  drawCrazyEights,
   drawSolitaireStock,
   drawRummy,
   discardRummy,
@@ -28,11 +33,13 @@ import {
   GameMode,
   GameState,
   isRed,
+  legalCrazyEightsCards,
   layRummyMeld,
   legalTrickCards,
   newGame,
   playAiTurn,
   playBundleCard,
+  playCrazyEights,
   playTrickCard,
   rankLabel,
   selectSolitaireWaste,
@@ -63,6 +70,10 @@ const rules: Record<GameId, string> = {
     'Partners sit opposite: seats 1 and 3 play together, as do seats 2 and 4. Bid how many tricks your team expects to win. A bid of zero is nil. Spades are trump; make your contract to score.',
   bundles:
     'Play one card each turn. Match a card in the centre by rank to collect it into your bundle. If there is no centre match, a card matching the top of a rival’s bundle steals that whole bundle. After all cards are played, the largest bundle wins.',
+  'crazy-eights':
+    'Each player gets five cards. Play a card matching the top discard by suit or rank; an eight can be played on anything and lets you choose the suit. If you have no legal play, draw one card; if it still cannot be played, your turn ends. Empty your hand to win and score the points left in opponents’ hands (8 = 50, face cards = 10, ace = 1). If everyone is blocked with no cards left to draw, the lowest hand score wins.',
+  blackjack:
+    'Get closer to 21 than the dealer without going over. Number cards count as shown, face cards as 10, and aces as 1 or 11. Choose Hit or Stand; the dealer reveals the hidden card and draws until reaching 17. The higher total wins; equal totals are a push. A two-card 21 is blackjack.',
 };
 
 function CardFace({
@@ -371,6 +382,7 @@ export default function GameScreen() {
     game.mode === 'pass' && game.current > 0 && !ready && game.phase !== 'done';
   const canLayMeld = game.id === 'rummy' && validRummyMeldSelection(game);
   const legalKeys = new Set(legalTrickCards(game).map(cardKey));
+  const legalCrazyKeys = new Set(legalCrazyEightsCards(game).map(cardKey));
 
   const selectCard = (card: Card, multiple = true) =>
     act((state) => toggleCardSelection(state, card, multiple));
@@ -522,6 +534,14 @@ export default function GameScreen() {
                       ? `${game.stock.length} undealt`
                       : game.id === 'spades' && game.phase === 'bid'
                         ? 'BIDDING'
+                        : game.id === 'blackjack'
+                          ? game.current === 0
+                            ? 'YOUR MOVE'
+                            : 'DEALER PLAYS'
+                          : game.id === 'crazy-eights'
+                            ? game.phase === 'declare'
+                              ? 'CHOOSE A SUIT'
+                              : `${game.stock.length} IN STOCK`
                         : game.id === 'rummy'
                           ? game.phase === 'draw'
                             ? 'DRAW A CARD'
@@ -831,6 +851,136 @@ export default function GameScreen() {
                   </View>
                 ) : null}
 
+                {game.id === 'crazy-eights' ? (
+                  <View style={styles.contentBlock}>
+                    <SectionLabel
+                      colors={colors}
+                      right={`${game.stock.length} IN STOCK`}
+                    >
+                      TOP DISCARD · SUIT {game.crazySuit ? suitGlyph(game.crazySuit) : '—'}
+                    </SectionLabel>
+                    <View
+                      style={[
+                        styles.centerTable,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
+                    >
+                      <View style={styles.cardRow}>
+                        <CardFace card={game.discard.at(-1)} colors={colors} compact />
+                        <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+                          Match rank or chosen suit
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={[styles.scoreGrid, { marginTop: 10 }]}>
+                      {game.players.map((player, index) => (
+                        <View
+                          key={player.name}
+                          style={[
+                            styles.scoreSeat,
+                            {
+                              borderColor: index === game.current ? colors.primary : colors.border,
+                              backgroundColor: colors.secondary,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.scoreName,
+                              { color: index === game.current ? colors.primary : colors.foreground },
+                            ]}
+                          >
+                            {player.name}
+                          </Text>
+                          <Text style={[styles.scoreValue, { color: colors.foreground }]}>
+                            {player.hand.length} cards · {player.score} pts
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                    {game.phase === 'declare' ? (
+                      <View style={styles.actionRow}>
+                        {(['S', 'H', 'D', 'C'] as const).map((suit) => (
+                          <ActionButton
+                            key={suit}
+                            label={suitGlyph(suit)}
+                            onPress={() => act((state) => chooseCrazyEightsSuit(state, suit))}
+                            colors={colors}
+                            testID={`crazy-eights-suit-${suit}`}
+                          />
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {game.id === 'blackjack' ? (
+                  <View style={styles.contentBlock}>
+                    <SectionLabel colors={colors} right="DEALER STANDS ON 17">
+                      THE TABLE
+                    </SectionLabel>
+                    <View
+                      style={[
+                        styles.blackjackTable,
+                        { backgroundColor: colors.secondary, borderColor: colors.border },
+                      ]}
+                    >
+                      <View style={styles.blackjackHand}>
+                        <Text style={[styles.scoreName, { color: colors.foreground }]}>
+                          Dealer
+                        </Text>
+                        <View style={styles.cardRow}>
+                          {game.players[1].hand.map((card, index) => (
+                            <CardFace
+                              key={cardKey(card)}
+                              card={card}
+                              faceDown={index > 0 && !game.dealerRevealed}
+                              colors={colors}
+                              compact
+                            />
+                          ))}
+                        </View>
+                        <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+                          {game.dealerRevealed
+                            ? `Total ${blackjackTotal(game.players[1].hand)}`
+                            : `Showing ${blackjackTotal([game.players[1].hand[0]])}`}
+                        </Text>
+                      </View>
+                      <View style={[styles.blackjackDivider, { backgroundColor: colors.border }]} />
+                      <View style={styles.blackjackHand}>
+                        <Text style={[styles.scoreName, { color: colors.foreground }]}>
+                          You
+                        </Text>
+                        <View style={styles.cardRow}>
+                          {game.players[0].hand.map((card) => (
+                            <CardFace key={cardKey(card)} card={card} colors={colors} compact />
+                          ))}
+                        </View>
+                        <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+                          Total {blackjackTotal(game.players[0].hand)}
+                        </Text>
+                      </View>
+                    </View>
+                    {game.phase === 'play' && game.current === 0 ? (
+                      <View style={[styles.actionRow, { marginTop: 11 }]}>
+                        <ActionButton
+                          label="Hit"
+                          onPress={() => act(blackjackHit)}
+                          colors={colors}
+                          testID="blackjack-hit"
+                        />
+                        <ActionButton
+                          label="Stand"
+                          onPress={() => act(blackjackStand)}
+                          colors={colors}
+                          secondary
+                          testID="blackjack-stand"
+                        />
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
                 {(game.id === 'hearts' || game.id === 'spades') ? (
                   <View style={styles.contentBlock}>
                     <SectionLabel
@@ -945,6 +1095,7 @@ export default function GameScreen() {
                   </View>
                 ) : null}
 
+                {game.id !== 'blackjack' ? (
                 <View style={styles.handBlock}>
                   <SectionLabel
                     colors={colors}
@@ -974,6 +1125,7 @@ export default function GameScreen() {
                         game.id === 'poker' ||
                         game.id === 'rummy' ||
                         game.id === 'bundles' ||
+                        (game.id === 'crazy-eights' && game.phase === 'play') ||
                         (isTrickGame && game.phase === 'trick');
                       const invalidTrick =
                         isTrickGame &&
@@ -991,7 +1143,10 @@ export default function GameScreen() {
                               ? undefined
                               : isTrickGame
                                 ? () => selectCard(card, false)
-                                : () => selectCard(card, game.id !== 'bundles')
+                                : () => selectCard(
+                                    card,
+                                    game.id !== 'bundles' && game.id !== 'crazy-eights',
+                                  )
                           }
                           testID={`hand-${cardKey(card)}`}
                         />
@@ -1041,6 +1196,31 @@ export default function GameScreen() {
                       testID="bundles-play"
                     />
                   ) : null}
+                  {game.id === 'crazy-eights' && game.phase === 'play' ? (
+                    <View style={styles.actionRow}>
+                      <ActionButton
+                        label="Play selected card"
+                        onPress={() =>
+                          game.selectedKeys.length === 1 &&
+                          act((state) => playCrazyEights(state, state.selectedKeys[0]))
+                        }
+                        colors={colors}
+                        disabled={
+                          game.selectedKeys.length !== 1 ||
+                          !legalCrazyKeys.has(game.selectedKeys[0])
+                        }
+                        testID="crazy-eights-play"
+                      />
+                      <ActionButton
+                        label="Draw"
+                        onPress={() => act(drawCrazyEights)}
+                        colors={colors}
+                        secondary
+                        disabled={legalCrazyKeys.size > 0}
+                        testID="crazy-eights-draw"
+                      />
+                    </View>
+                  ) : null}
                   {(game.id === 'hearts' || game.id === 'spades') &&
                   game.phase === 'trick' ? (
                     <ActionButton
@@ -1052,6 +1232,7 @@ export default function GameScreen() {
                     />
                   ) : null}
                 </View>
+                ) : null}
               </>
             )}
           </ScrollView>
@@ -1203,6 +1384,9 @@ const styles = StyleSheet.create({
   scoreSeat: { width: '48%', borderWidth: 1, borderRadius: 13, padding: 10 },
   scoreName: { fontSize: 11, fontWeight: '700' },
   scoreValue: { fontSize: 13, fontWeight: '700', marginTop: 5 },
+  blackjackTable: { borderWidth: 1, borderRadius: 15, padding: 13, gap: 12 },
+  blackjackHand: { gap: 7 },
+  blackjackDivider: { height: 1 },
   trickTable: { minHeight: 120, borderWidth: 1, borderRadius: 15, padding: 12, marginBottom: 20 },
   trickCards: {
     flex: 1,

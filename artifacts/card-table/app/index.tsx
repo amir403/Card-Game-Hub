@@ -80,7 +80,7 @@ export default function HomeScreen() {
           Cards on the{'\n'}table.
         </Text>
         <Text style={[styles.intro, { color: colors.mutedForeground }]}>
-          Six familiar games. No signal needed. Take a seat.
+          Familiar games. No signal needed. Take a seat.
         </Text>
 
         {resume && isReady ? (
@@ -109,12 +109,13 @@ export default function HomeScreen() {
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
             The collection
           </Text>
-          <Text style={[styles.count, { color: colors.mutedForeground }]}>06 GAMES</Text>
+          <Text style={[styles.count, { color: colors.mutedForeground }]}>
+            {String(catalog.length).padStart(2, '0')} GAMES
+          </Text>
         </View>
 
         <View style={styles.grid}>
           {catalog.map((game, index) => {
-            const isSolitaire = game.id === 'solitaire';
             const markColor =
               game.mark === '♥' || game.mark === '♦'
                 ? colors.destructive
@@ -163,10 +164,10 @@ export default function HomeScreen() {
                     ]}
                   >
                     <Text style={[styles.actionText, { color: colors.primaryForeground }]}>
-                      {isSolitaire ? 'Play' : 'Vs computer'}
+                      {game.id === 'solitaire' ? 'Play' : 'Vs computer'}
                     </Text>
                   </Pressable>
-                  {!isSolitaire ? (
+                  {game.passAndPlay ? (
                     <Pressable
                       accessibilityRole="button"
                       testID={`play-${game.id}-pass`}

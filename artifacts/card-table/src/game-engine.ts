@@ -4,7 +4,9 @@ export type GameId =
   | 'rummy'
   | 'hearts'
   | 'spades'
-  | 'bundles';
+  | 'bundles'
+  | 'crazy-eights'
+  | 'blackjack';
 export type GameMode = 'ai' | 'pass';
 export type Suit = 'S' | 'H' | 'D' | 'C';
 export type Card = { suit: Suit; rank: number };
@@ -38,10 +40,13 @@ export type GameState = {
     index: number;
   };
   current: number;
-  phase: 'play' | 'draw' | 'bid' | 'trick' | 'showdown' | 'done';
+  phase: 'play' | 'draw' | 'bid' | 'trick' | 'declare' | 'showdown' | 'done';
   trick: TrickPlay[];
   leadSuit: Suit | null;
   heartsBroken: boolean;
+  crazySuit: Suit | null;
+  crazyPasses: number;
+  dealerRevealed: boolean;
   lastCapture: number;
   round: number;
   winner: number;
@@ -56,6 +61,7 @@ export const catalog: {
   players: string;
   description: string;
   mark: string;
+  passAndPlay: boolean;
 }[] = [
   {
     id: 'solitaire',
@@ -64,6 +70,7 @@ export const catalog: {
     players: '1 player',
     description: 'Build four suits from ace to king.',
     mark: '♠',
+    passAndPlay: false,
   },
   {
     id: 'poker',
@@ -72,6 +79,7 @@ export const catalog: {
     players: '2–4 players',
     description: 'Trade cards, read the table, take the pot.',
     mark: '♦',
+    passAndPlay: true,
   },
   {
     id: 'rummy',
@@ -80,6 +88,7 @@ export const catalog: {
     players: '2 players',
     description: 'Make matching sets and suited runs.',
     mark: '♥',
+    passAndPlay: true,
   },
   {
     id: 'hearts',
@@ -88,6 +97,7 @@ export const catalog: {
     players: '4 players',
     description: 'Avoid hearts and the queen of spades.',
     mark: '♥',
+    passAndPlay: true,
   },
   {
     id: 'spades',
@@ -96,6 +106,7 @@ export const catalog: {
     players: '4 players',
     description: 'Bid as a team, then make your contract.',
     mark: '♣',
+    passAndPlay: true,
   },
   {
     id: 'bundles',
@@ -104,6 +115,25 @@ export const catalog: {
     players: '2–4 players',
     description: 'Match the table or steal a rival’s bundle.',
     mark: '♦',
+    passAndPlay: true,
+  },
+  {
+    id: 'crazy-eights',
+    title: 'Crazy Eights',
+    subtitle: 'Classic',
+    players: '2–4 players',
+    description: 'Match the suit or rank; eights are wild.',
+    mark: '♣',
+    passAndPlay: true,
+  },
+  {
+    id: 'blackjack',
+    title: 'Blackjack',
+    subtitle: 'Dealer stands on 17',
+    players: '1 player + dealer',
+    description: 'Get closer to 21 than the dealer without going over.',
+    mark: '♠',
+    passAndPlay: false,
   },
 ];
 
@@ -158,6 +188,9 @@ const baseState = (id: GameId, mode: GameMode): GameState => ({
   trick: [],
   leadSuit: null,
   heartsBroken: false,
+  crazySuit: null,
+  crazyPasses: 0,
+  dealerRevealed: false,
   lastCapture: -1,
   round: 1,
   winner: -1,
@@ -189,6 +222,42 @@ export function newGame(id: GameId, mode: GameMode): GameState {
       state.players.forEach((player) => player.hand.push(state.stock.pop()!));
     }
     state.phase = 'play';
+    return state;
+  }
+
+  if (id === 'blackjack') {
+    state.players = basePlayers(mode, 2);
+    state.players[1].name = 'Dealer';
+    state.stock = deck;
+    for (let deal = 0; deal < 2; deal += 1) {
+      state.players.forEach((player) => player.hand.push(state.stock.pop()!));
+    }
+    const playerNatural = blackjackTotal(state.players[0].hand) === 21;
+    const dealerNatural = blackjackTotal(state.players[1].hand) === 21;
+    if (playerNatural || dealerNatural) {
+      if (playerNatural && dealerNatural)
+        return finish(state, -1, 'Both you and the dealer have blackjack. Push.');
+      return playerNatural
+        ? finish(state, 0, 'Blackjack! You win with 21.')
+        : finish(state, 1, 'The dealer has blackjack. Dealer wins.');
+    }
+    return state;
+  }
+
+  if (id === 'crazy-eights') {
+    state.players = basePlayers(mode, 4);
+    state.stock = deck;
+    for (let deal = 0; deal < 5; deal += 1) {
+      state.players.forEach((player) => player.hand.push(state.stock.pop()!));
+    }
+    const firstDiscard = state.stock.findIndex((card) => card.rank !== 8);
+    [state.stock[firstDiscard], state.stock[state.stock.length - 1]] = [
+      state.stock[state.stock.length - 1],
+      state.stock[firstDiscard],
+    ];
+    const firstCard = state.stock.pop()!;
+    state.discard = [firstCard];
+    state.crazySuit = firstCard.suit;
     return state;
   }
 
@@ -243,6 +312,176 @@ const finish = (state: GameState, winner: number, result: string): GameState => 
   winner,
   result,
 });
+
+export function blackjackTotal(hand: Card[]): number {
+  let total = 0;
+  let aces = 0;
+  for (const card of hand) {
+    if (card.rank === 1) {
+      total += 11;
+      aces += 1;
+    } else {
+      total += Math.min(card.rank, 10);
+    }
+  }
+  while (total > 21 && aces > 0) {
+    total -= 10;
+    aces -= 1;
+  }
+  return total;
+}
+
+function finishBlackjack(state: GameState): GameState {
+  const playerTotal = blackjackTotal(state.players[0].hand);
+  const dealerTotal = blackjackTotal(state.players[1].hand);
+  const winner =
+    dealerTotal > 21 || playerTotal > dealerTotal
+      ? 0
+      : playerTotal === dealerTotal
+        ? -1
+        : 1;
+  const result =
+    winner === 0
+      ? dealerTotal > 21
+        ? `Dealer busts at ${dealerTotal}. You win with ${playerTotal}.`
+        : `You win ${playerTotal} to ${dealerTotal}.`
+      : winner === -1
+        ? `Push: you and the dealer both have ${playerTotal}.`
+        : `Dealer wins ${dealerTotal} to ${playerTotal}.`;
+  return finish({ ...state, dealerRevealed: true }, winner, result);
+}
+
+export function blackjackHit(state: GameState): GameState {
+  if (state.id !== 'blackjack' || state.phase !== 'play' || state.current !== 0)
+    return state;
+  const card = state.stock.at(-1);
+  if (!card) return blackjackStand(state);
+  const stock = state.stock.slice(0, -1);
+  const players = state.players.map((player, index) =>
+    index === 0 ? { ...player, hand: [...player.hand, card] } : player,
+  );
+  const next = { ...state, players, stock, moves: state.moves + 1 };
+  const total = blackjackTotal(players[0].hand);
+  if (total > 21) return finish({ ...next, dealerRevealed: true }, 1, `You bust at ${total}. Dealer wins.`);
+  return total === 21 ? blackjackStand(next) : next;
+}
+
+export function blackjackStand(state: GameState): GameState {
+  if (state.id !== 'blackjack' || state.phase !== 'play' || state.current !== 0)
+    return state;
+  return { ...state, current: 1, dealerRevealed: true, moves: state.moves + 1 };
+}
+
+export function legalCrazyEightsCards(state: GameState): Card[] {
+  if (state.id !== 'crazy-eights' || state.phase !== 'play') return [];
+  const top = state.discard.at(-1);
+  if (!top) return [];
+  return state.players[state.current]?.hand.filter(
+    (card) => card.rank === 8 || card.suit === state.crazySuit || card.rank === top.rank,
+  ) ?? [];
+}
+
+const crazyEightsCardValue = (card: Card): number =>
+  card.rank === 8 ? 50 : card.rank >= 11 ? 10 : card.rank === 1 ? 1 : card.rank;
+
+function finishCrazyEightsRound(state: GameState, winner: number, blocked = false): GameState {
+  const points = state.players.reduce(
+    (total, player, index) =>
+      index === winner
+        ? total
+        : total + player.hand.reduce((sum, card) => sum + crazyEightsCardValue(card), 0),
+    0,
+  );
+  const players = state.players.map((player, index) =>
+    index === winner ? { ...player, score: player.score + points } : player,
+  );
+  const message = blocked
+    ? `${players[winner].name} wins with the lowest hand and scores ${points} points.`
+    : `${players[winner].name} went out and scores ${points} points.`;
+  return finish({ ...state, players }, winner, message);
+}
+
+function finishBlockedCrazyEights(state: GameState): GameState {
+  const values = state.players.map((player) =>
+    player.hand.reduce((sum, card) => sum + crazyEightsCardValue(card), 0),
+  );
+  const winner = values.reduce((best, value, index) => (value < values[best] ? index : best), 0);
+  return finishCrazyEightsRound(state, winner, true);
+}
+
+export function playCrazyEights(state: GameState, cardId: string): GameState {
+  if (state.id !== 'crazy-eights' || state.phase !== 'play') return state;
+  const card = state.players[state.current]?.hand.find((item) => key(item) === cardId);
+  if (!card || !legalCrazyEightsCards(state).some((item) => key(item) === cardId))
+    return state;
+  const current = state.current;
+  const players = state.players.map((player, index) =>
+    index === current
+      ? { ...player, hand: player.hand.filter((item) => key(item) !== cardId) }
+      : player,
+  );
+  const next: GameState = {
+    ...state,
+    players,
+    discard: [...state.discard, card],
+    selectedKeys: [],
+    crazySuit: card.rank === 8 ? null : card.suit,
+    crazyPasses: 0,
+    moves: state.moves + 1,
+  };
+  if (players[current].hand.length === 0) return finishCrazyEightsRound(next, current);
+  if (card.rank === 8) return { ...next, phase: 'declare' };
+  return { ...next, current: (current + 1) % players.length };
+}
+
+export function chooseCrazyEightsSuit(state: GameState, suit: Suit): GameState {
+  if (state.id !== 'crazy-eights' || state.phase !== 'declare') return state;
+  return {
+    ...state,
+    crazySuit: suit,
+    phase: 'play',
+    current: (state.current + 1) % state.players.length,
+    moves: state.moves + 1,
+  };
+}
+
+export function drawCrazyEights(state: GameState): GameState {
+  if (state.id !== 'crazy-eights' || state.phase !== 'play' || legalCrazyEightsCards(state).length)
+    return state;
+  const stock = [...state.stock];
+  if (stock.length === 0) {
+    const crazyPasses = state.crazyPasses + 1;
+    if (crazyPasses >= state.players.length)
+      return finishBlockedCrazyEights({ ...state, crazyPasses });
+    return {
+      ...state,
+      crazyPasses,
+      current: (state.current + 1) % state.players.length,
+      selectedKeys: [],
+      moves: state.moves + 1,
+    };
+  }
+  const card = stock.pop()!;
+  const current = state.current;
+  const players = state.players.map((player, index) =>
+    index === current ? { ...player, hand: [...player.hand, card] } : player,
+  );
+  const next: GameState = {
+    ...state,
+    players,
+    stock,
+    selectedKeys: [],
+    crazyPasses: 0,
+    moves: state.moves + 1,
+  };
+  const canPlayDrawn =
+    card.rank === 8 ||
+    card.suit === state.crazySuit ||
+    card.rank === state.discard.at(-1)?.rank;
+  return canPlayDrawn
+    ? next
+    : { ...next, current: (current + 1) % players.length };
+}
 
 export function toggleCardSelection(
   state: GameState,
@@ -1010,8 +1249,57 @@ function aiTrickCard(state: GameState): Card | undefined {
   })[0];
 }
 
+function aiCrazyEightsCard(state: GameState): Card | undefined {
+  const legal = legalCrazyEightsCards(state);
+  const hand = state.players[state.current].hand;
+  const suitCounts = suits.reduce(
+    (counts, suit) => ({
+      ...counts,
+      [suit]: hand.filter((card) => card.suit === suit && card.rank !== 8).length,
+    }),
+    {} as Record<Suit, number>,
+  );
+  return [...legal].sort(
+    (a, b) =>
+      Number(a.rank === 8) - Number(b.rank === 8) ||
+      suitCounts[b.suit] - suitCounts[a.suit] ||
+      crazyEightsCardValue(b) - crazyEightsCardValue(a),
+  )[0];
+}
+
 function advanceAi(state: GameState): GameState {
   if (state.phase === 'done' || state.current === 0) return state;
+  if (state.id === 'blackjack') {
+    const dealer = state.players[1];
+    if (blackjackTotal(dealer.hand) >= 17 || state.stock.length === 0)
+      return finishBlackjack(state);
+    const card = state.stock.at(-1)!;
+    const players = state.players.map((player, index) =>
+      index === 1 ? { ...player, hand: [...player.hand, card] } : player,
+    );
+    const next = {
+      ...state,
+      players,
+      stock: state.stock.slice(0, -1),
+      moves: state.moves + 1,
+    };
+    return blackjackTotal(players[1].hand) > 21 ? finishBlackjack(next) : next;
+  }
+  if (state.id === 'crazy-eights') {
+    if (state.phase === 'declare') {
+      const hand = state.players[state.current].hand;
+      const chosenSuit = suits.reduce((best, suit) => {
+        const count = hand.filter((card) => card.suit === suit && card.rank !== 8).length;
+        const bestCount = hand.filter((card) => card.suit === best && card.rank !== 8).length;
+        return count > bestCount ? suit : best;
+      }, 'S' as Suit);
+      return chooseCrazyEightsSuit(state, chosenSuit);
+    }
+    const card = aiCrazyEightsCard(state);
+    return card
+      ? playCrazyEights(state, key(card))
+      : drawCrazyEights(state);
+  }
   if (state.id === 'poker' && state.phase === 'play') {
     const indices = pokerDiscardIndices(state.players[state.current].hand);
     const discarded = indices.map((index) => state.players[state.current].hand[index]);
