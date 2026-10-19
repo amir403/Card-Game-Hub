@@ -69,10 +69,8 @@ function getDeploymentDomain() {
     return stripProtocol(process.env.EXPO_PUBLIC_DOMAIN);
   }
 
-  console.error(
-    'ERROR: No deployment domain found. Set REPLIT_INTERNAL_APP_DOMAIN, REPLIT_DEV_DOMAIN, or EXPO_PUBLIC_DOMAIN',
-  );
-  process.exit(1);
+  // Local development fallback (no hosting domain configured).
+  return 'localhost:5000';
 }
 
 function prepareDirectories(timestamp) {
